@@ -1,0 +1,24 @@
+{
+  "name": "@linkfetch/web",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "astro": "^6.4.2",
+    "@astrojs/react": "^4.2.5",
+    "@astrojs/tailwind": "^6.0.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "framer-motion": "^12.10.4"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.20",
+    "@types/react-dom": "^18.3.6"
+  }
+}

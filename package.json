@@ -1,0 +1,17 @@
+{
+  "name": "web-media-downloader",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "fuser -k 3001/tcp 4321/tcp 2>/dev/null; pnpm run --parallel -r dev",
+    "dev:api": "pnpm --filter @linkfetch/api dev",
+    "dev:web": "pnpm --filter @linkfetch/web dev",
+    "build": "pnpm --filter @linkfetch/web build",
+    "preview": "pnpm --filter @linkfetch/web preview",
+    "astro": "pnpm --filter @linkfetch/web astro"
+  }
+}

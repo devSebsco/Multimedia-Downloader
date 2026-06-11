@@ -1,0 +1,36 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro'; 
+import Navbar from '../components/Navbar';
+import HeroSection from '../components/HeroSection';
+import PlatformsStrip from '../components/PlatformsStrip';
+import Footer from '../components/Footer';
+import AnimatedBackground from '../components/AnimatedBackground';
+
+const siteUrl = Astro.site?.href || 'https://linkfetch.vercel.app';
+const schemaData = {
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "LinkFetch",
+  "url": siteUrl,
+  "description": "Descarga videos y audios de YouTube, TikTok, Instagram, Facebook y más. Gratis, rápido y sin registro.",
+  "applicationCategory": "Multimedia",
+  "operatingSystem": "All",
+  "browserRequirements": "Requires JavaScript",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+};
+---
+
+<BaseLayout>
+  <script type="application/ld+json" set:html={JSON.stringify(schemaData)}></script>
+  <AnimatedBackground client:visible />
+  <Navbar client:load />
+  <main style="padding-top: 64px;">
+    <HeroSection client:load />
+  </main>
+  <PlatformsStrip client:visible />
+  <Footer client:visible />
+</BaseLayout>

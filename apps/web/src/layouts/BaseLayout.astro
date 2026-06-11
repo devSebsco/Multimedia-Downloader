@@ -1,0 +1,89 @@
+---
+import '../styles/globals.css';
+
+export interface Props {
+  title?: string;
+  description?: string;
+}
+const {
+  title = 'LinkFetch — Descarga Videos y Audios Online | YouTube, TikTok, Instagram',
+  description = 'Descarga videos y audios de YouTube, TikTok, Instagram, Facebook y más. Gratis, rápido y sin registro. Elige formato MP4, MP3, WAV o WEBM.',
+} = Astro.props;
+
+const siteUrl = Astro.site?.href || 'https://linkfetch.vercel.app';
+const canonicalUrl = new URL(Astro.url.pathname, Astro.site).href;
+const ogImageUrl = new URL('/favicon-180.png', Astro.site).href;
+---
+<!DOCTYPE html>
+<html lang="es" data-theme="dark" data-lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title}</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon-96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="/favicon-180.png" sizes="180x180">
+  <meta name="description" content={description} />
+  <meta name="keywords" content="descargar videos, descargar mp3, youtube downloader, tiktok downloader, instagram downloader" />
+  <link rel="canonical" href={canonicalUrl} />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="LinkFetch — Descarga Videos y Audios Online" />
+  <meta property="og:description" content={description} />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content={canonicalUrl} />
+  <meta property="og:image" content={ogImageUrl} />
+  <meta property="og:image:width" content="180" />
+  <meta property="og:image:height" content="180" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="LinkFetch — Descarga Videos y Audios Online" />
+  <meta name="twitter:description" content={description} />
+  <meta name="twitter:image" content={ogImageUrl} />
+
+  <!-- Fonts preconnect -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+  <!-- Theme init: set data-theme before paint to avoid flash -->
+  <script is:inline>
+    (function() {
+      var saved = localStorage.getItem('linkfetch-theme');
+      document.documentElement.setAttribute('data-theme', saved || 'dark');
+    })();
+  </script>
+
+  <!-- Lang init: set data-lang before paint to avoid flash -->
+  <script is:inline>
+    (function () {
+      var saved = localStorage.getItem('linkfetch-lang');
+      document.documentElement.setAttribute('data-lang', saved || 'es');
+    })();
+  </script>
+</head>
+<body>
+  <slot />
+
+  <!-- Theme toggle handler — runs immediately, no hydration dependency -->
+  <script is:inline>
+    (function () {
+      function applyTheme(t) {
+        document.documentElement.setAttribute('data-theme', t);
+        localStorage.setItem('linkfetch-theme', t);
+      }
+
+      document.addEventListener('DOMContentLoaded', function () {
+        var btn = document.querySelector('[data-theme-toggle]');
+        if (!btn) return;
+
+        btn.addEventListener('click', function () {
+          var current = document.documentElement.getAttribute('data-theme') || 'light';
+          applyTheme(current === 'light' ? 'dark' : 'light');
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
