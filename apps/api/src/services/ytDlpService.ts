@@ -63,7 +63,9 @@ function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
   ];
 
   if (platform === 'youtube') {
-    base.push('--extractor-args', 'youtube:player_client=android,web');
+    // Don't override player_client — let yt-dlp use its defaults (android_vr, ios_downgraded, etc.)
+    // Just skip webpage extraction to avoid bot detection on datacenter IPs
+    base.push('--extractor-args', 'youtube:player_skip=webpage');
 
     const cookiesPath = process.env.YOUTUBE_COOKIES_PATH;
     if (cookiesPath) {
@@ -75,13 +77,25 @@ function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
     }
   } else if (platform === 'instagram') {
     const proxyUrl = process.env.INSTAGRAM_PROXY_URL;
-    if (!proxyUrl) {
+    if (proxyUrl) {
+      base.push('--proxy', proxyUrl);
+    }
+
+    const cookiesPath = process.env.INSTAGRAM_COOKIES_PATH;
+    if (cookiesPath) {
+      if (fs.existsSync(cookiesPath)) {
+        base.push('--cookies', cookiesPath);
+      } else {
+        logger.warn(`INSTAGRAM_COOKIES_PATH set but file not found at ${cookiesPath}`);
+      }
+    }
+
+    if (!proxyUrl && !cookiesPath) {
       throw Object.assign(
-        new Error('Instagram no está disponible sin configuración de proxy'),
+        new Error('Instagram requiere configuración de proxy o cookies en producción'),
         { code: 'PROXY_REQUIRED' }
       );
     }
-    base.push('--proxy', proxyUrl);
   }
 
   return base;
@@ -123,6 +137,8 @@ export function getMediaInfo(url: string, platform: string): Promise<MediaInfo> 
           reject(Object.assign(new Error('Este contenido es privado o requiere inicio de sesión.'), { code: 'PRIVATE_CONTENT' }));
         } else if (lower.includes('not available') || lower.includes('geo') || lower.includes('blocked') || lower.includes('country')) {
           reject(Object.assign(new Error('Este contenido no está disponible en tu región.'), { code: 'GEO_RESTRICTED' }));
+        } else if (lower.includes('connection refused') || lower.includes('could not connect') || lower.includes('max retries') || lower.includes('connectionerror') || lower.includes('reset peer') || lower.includes('connection reset')) {
+          reject(Object.assign(new Error('Error de conexión. Verifica la configuración de proxy o cookies.'), { code: 'PROXY_ERROR' }));
         } else {
           reject(Object.assign(new Error('Error al descargar la información del video.'), { code: 'DOWNLOAD_FAILED' }));
         }
