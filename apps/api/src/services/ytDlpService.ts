@@ -18,15 +18,16 @@ function getYtDlpPath(): string {
   for (const candidate of CANDIDATES) {
     if (candidate === 'yt-dlp') {
       try {
-        execFileSync('yt-dlp', ['--version'], { stdio: 'ignore' });
-        logger.debug(`yt-dlp found in PATH`);
+        const ver = execFileSync('yt-dlp', ['--version'], { encoding: 'utf-8' }).trim();
+        logger.info(`yt-dlp version ${ver} found in PATH`);
         return 'yt-dlp';
       } catch {
         continue;
       }
     }
     if (fs.existsSync(candidate)) {
-      logger.debug(`yt-dlp found at ${candidate}`);
+      const ver = execFileSync(candidate, ['--version'], { encoding: 'utf-8' }).trim();
+      logger.info(`yt-dlp version ${ver} found at ${candidate}`);
       return candidate;
     }
   }
@@ -74,23 +75,27 @@ function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
   ];
 
   if (platform === 'youtube') {
-    // Let yt-dlp use its default clients (android_vr, ios_downgraded, etc.)
-    // These don't require PO tokens and work from datacenter IPs.
+    // Force the standard Android client — it uses a different InnerTube API key
+    // that is less aggressively blocked from datacenter IPs than web or android_vr.
     // Skip webpage extraction to avoid bot-triggering HTTP requests.
-    base.push('--extractor-args', 'youtube:player_skip=webpage');
+    // See: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube
+    base.push('--extractor-args', 'youtube:player_client=android;player_skip=webpage');
     base.push('--remote-components', 'ejs:github');
-    // Cookies are intentionally NOT passed — expired cookies force the "web" client
-    // which triggers "Sign in to confirm you're not a bot" from datacenter IPs.
-    // Without cookies, yt-dlp uses android_vr/ios_downgraded which work fine.
   } else if (platform === 'instagram') {
     const proxyUrl = process.env.INSTAGRAM_PROXY_URL;
     if (proxyUrl) {
+      // Log masked URL for debugging (hide password)
+      try {
+        const u = new URL(proxyUrl);
+        logger.info(`Instagram proxy: ${u.protocol}//${u.username}:***@${u.hostname}:${u.port || u.protocol === 'https:' ? '443' : '80'}`);
+      } catch {
+        logger.warn(`Instagram proxy URL format is invalid: ${proxyUrl.slice(0, 30)}...`);
+      }
       base.push('--proxy', proxyUrl);
     }
     // Cookies deshabilitadas intencionalmente (misma razón que YouTube):
-    // cookies expiradas fuerzan cliente web y desencadenan "login required"
-    // desde IPs de datacenter. Si el proxy es residencial, funciona sin cookies.
-    // Para usar cookies, deben ser FRESCAS (exportadas de incógnito sin recargar).
+    // cookies expiradas o mal configuradas empeoran la detección.
+    // El proxy debe ser residencial (BrightData, Oxylabs, IPRoyal).
 
     if (!proxyUrl) {
       if (process.env.NODE_ENV === 'production') {
@@ -142,8 +147,10 @@ export function getMediaInfo(url: string, platform: string): Promise<MediaInfo> 
           reject(Object.assign(new Error('Este contenido es privado o requiere inicio de sesión.'), { code: 'PRIVATE_CONTENT' }));
         } else if (lower.includes('not available') || lower.includes('geo') || lower.includes('blocked') || lower.includes('country')) {
           reject(Object.assign(new Error('Este contenido no está disponible en tu región.'), { code: 'GEO_RESTRICTED' }));
+        } else if (lower.includes('407') && lower.includes('proxy authentication')) {
+          reject(Object.assign(new Error('Error de autenticación del proxy. Verifica que el usuario y contraseña en INSTAGRAM_PROXY_URL estén correctamente codificados (caracteres especiales como @ : / # deben ser URL-encoded).'), { code: 'PROXY_ERROR' }));
         } else if (lower.includes('connection refused') || lower.includes('could not connect') || lower.includes('max retries') || lower.includes('connectionerror') || lower.includes('reset peer') || lower.includes('connection reset')) {
-          reject(Object.assign(new Error('Error de conexión. Verifica la configuración de proxy o cookies.'), { code: 'PROXY_ERROR' }));
+          reject(Object.assign(new Error('Error de conexión. Verifica la configuración de proxy.'), { code: 'PROXY_ERROR' }));
         } else {
           reject(Object.assign(new Error('Error al descargar la información del video.'), { code: 'DOWNLOAD_FAILED' }));
         }
