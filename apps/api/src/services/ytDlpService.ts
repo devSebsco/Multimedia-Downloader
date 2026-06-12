@@ -63,6 +63,30 @@ type YtDlpDump = {
   ext: string;
 };
 
+function encodeProxyCredentials(rawUrl: string): string {
+  try {
+    // Usar el ÚLTIMO @ como separador user:pass vs host
+    // Esto evita que @ dentro de la contraseña rompa el parseo
+    const protoEnd = rawUrl.indexOf('://');
+    if (protoEnd === -1) return rawUrl;
+    const prefix = rawUrl.slice(0, protoEnd + 3);
+    const rest = rawUrl.slice(protoEnd + 3);
+    const lastAt = rest.lastIndexOf('@');
+    if (lastAt === -1) return rawUrl;
+    const creds = rest.slice(0, lastAt);
+    const hostPart = rest.slice(lastAt + 1);
+    const colonIdx = creds.indexOf(':');
+    if (colonIdx === -1) return rawUrl;
+    const user = creds.slice(0, colonIdx);
+    const pass = creds.slice(colonIdx + 1);
+    const encUser = encodeURIComponent(user);
+    const encPass = encodeURIComponent(pass);
+    return `${prefix}${encUser}:${encPass}@${hostPart}`;
+  } catch {
+    return rawUrl;
+  }
+}
+
 function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
   const nodePath = process.execPath;
   const base = [
@@ -75,36 +99,43 @@ function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
   ];
 
   if (platform === 'youtube') {
-    // Force the standard Android client — it uses a different InnerTube API key
-    // that is less aggressively blocked from datacenter IPs than web or android_vr.
-    // Skip webpage extraction to avoid bot-triggering HTTP requests.
-    // See: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube
+    // YouTube bloquea IPs de datacenter (Render) a nivel HTTP.
+    // player_client=android ayuda en algunos casos, pero si el IP está
+    // bloqueado, la única solución es proxy residencial o cookies frescas.
+
+    const proxyUrl = process.env.YOUTUBE_PROXY_URL;
+    if (proxyUrl) {
+      const encoded = encodeProxyCredentials(proxyUrl);
+      base.push('--proxy', encoded);
+      logger.info(`YouTube proxy enabled: ${encoded.replace(/:([^@]+)@/, ':***@')}`);
+    }
+
+    const cookiesPath = process.env.YOUTUBE_COOKIES_PATH;
+    if (cookiesPath) {
+      if (fs.existsSync(cookiesPath)) {
+        base.push('--cookies', cookiesPath);
+        logger.info('YouTube cookies loaded (must be FRESH — exportadas de incógnito sin recargar)');
+      } else {
+        logger.warn(`YOUTUBE_COOKIES_PATH set but file not found at ${cookiesPath}`);
+      }
+    }
+
     base.push('--extractor-args', 'youtube:player_client=android;player_skip=webpage');
     base.push('--remote-components', 'ejs:github');
   } else if (platform === 'instagram') {
     const proxyUrl = process.env.INSTAGRAM_PROXY_URL;
     if (proxyUrl) {
-      // Log masked URL for debugging (hide password)
-      try {
-        const u = new URL(proxyUrl);
-        logger.info(`Instagram proxy: ${u.protocol}//${u.username}:***@${u.hostname}:${u.port || u.protocol === 'https:' ? '443' : '80'}`);
-      } catch {
-        logger.warn(`Instagram proxy URL format is invalid: ${proxyUrl.slice(0, 30)}...`);
-      }
-      base.push('--proxy', proxyUrl);
-    }
-    // Cookies deshabilitadas intencionalmente (misma razón que YouTube):
-    // cookies expiradas o mal configuradas empeoran la detección.
-    // El proxy debe ser residencial (BrightData, Oxylabs, IPRoyal).
-
-    if (!proxyUrl) {
+      const encoded = encodeProxyCredentials(proxyUrl);
+      const u = new URL(encoded);
+      logger.info(`Instagram proxy: ${u.protocol}//${u.username}:***@${u.hostname}:${u.port || '80'}`);
+      base.push('--proxy', encoded);
+    } else {
       if (process.env.NODE_ENV === 'production') {
         throw Object.assign(
           new Error('Instagram requiere proxy residencial en producción. Configura INSTAGRAM_PROXY_URL.'),
           { code: 'PROXY_REQUIRED' }
         );
       }
-      // En desarrollo, intentar sin proxy (IP residencial suele funcionar)
     }
   }
 
