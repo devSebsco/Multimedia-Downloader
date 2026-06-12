@@ -27,6 +27,12 @@ export async function analyzeController(
     const info = await getMediaInfo(url, platform);
     info.platform = platform;
 
+    if (info.thumbnail && info.platform === 'instagram') {
+      const proto = req.headers['x-forwarded-proto'] || req.protocol;
+      const host = req.headers['x-forwarded-host'] || req.get('host');
+      info.thumbnail = `${proto}://${host}/thumbnail?url=${encodeURIComponent(info.thumbnail)}`;
+    }
+
     res.json({
       success: true,
       data: info,

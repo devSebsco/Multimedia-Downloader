@@ -6,6 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { analyzeRouter } from './routes/analyze';
 import { downloadRouter } from './routes/download';
+import { thumbnailRouter } from './routes/thumbnail';
 import { errorHandler } from './middlewares/errorHandler';
 import { purgeOldTempFiles } from './utils/cleanup';
 import { logger } from './utils/logger';
@@ -32,12 +33,14 @@ if (!fs.existsSync(TEMP_DIR)) {
 }
 
 const corsOrigins = FRONTEND_URL.split(',').map(s => s.trim());
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json({ limit: '10kb' }));
 
 app.use('/analyze', analyzeRouter);
 app.use('/download', downloadRouter);
+app.use('/thumbnail', thumbnailRouter);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', frontend_url: FRONTEND_URL }));
 

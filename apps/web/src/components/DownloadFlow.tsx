@@ -274,7 +274,7 @@ export default function DownloadFlow() {
                 display: 'inline-block',
                 flexShrink: 0,
               }}/>
-              {t.analyzingBtn}
+              <span style={{ display: 'flex', alignItems: 'center', lineHeight: '1', paddingTop: '2px'}}>{t.analyzingBtn}</span>
             </>
           ) : (
             <>

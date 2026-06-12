@@ -47,25 +47,35 @@ type YtDlpFormat = {
   tbr: number | null;
 };
 
+type YtDlpThumbnail = {
+  url: string;
+  height: number | null;
+  width: number | null;
+};
+
 type YtDlpDump = {
   title: string;
   thumbnail: string | null;
+  thumbnails?: YtDlpThumbnail[];
   duration: number | null;
   formats: YtDlpFormat[];
   ext: string;
 };
 
 function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
+  const nodePath = process.execPath;
   const base = [
     ...extra,
     '--no-playlist',
     '--extractor-retries', '3',
+    '--js-runtimes', `node:${nodePath}`,
   ];
 
   if (platform === 'youtube') {
     // Don't override player_client — let yt-dlp use its defaults (android_vr, ios_downgraded, etc.)
-    // Just skip webpage extraction to avoid bot detection on datacenter IPs
+    // Skip webpage extraction + enable remote EJS solvers to handle PO token challenges
     base.push('--extractor-args', 'youtube:player_skip=webpage');
+    base.push('--remote-components', 'ejs:github');
 
     const cookiesPath = process.env.YOUTUBE_COOKIES_PATH;
     if (cookiesPath) {
@@ -91,10 +101,13 @@ function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
     }
 
     if (!proxyUrl && !cookiesPath) {
-      throw Object.assign(
-        new Error('Instagram requiere configuración de proxy o cookies en producción'),
-        { code: 'PROXY_REQUIRED' }
-      );
+      if (process.env.NODE_ENV === 'production') {
+        throw Object.assign(
+          new Error('Instagram requiere configuración de proxy o cookies en producción'),
+          { code: 'PROXY_REQUIRED' }
+        );
+      }
+      // En desarrollo, intentar sin proxy/cookies (IP residencial suele funcionar)
     }
   }
 
@@ -200,10 +213,12 @@ export function getMediaInfo(url: string, platform: string): Promise<MediaInfo> 
             return bNum - aNum;
           });
 
+        const thumb = data.thumbnail ?? data.thumbnails?.[0]?.url ?? null;
+
         resolve({
           title: data.title,
-          thumbnail: data.thumbnail || null,
-          duration: data.duration || null,
+          thumbnail: thumb,
+          duration: data.duration ? Math.round(data.duration) : null,
           platform: 'youtube',
           contentType,
           formats: {

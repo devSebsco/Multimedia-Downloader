@@ -11,7 +11,7 @@ export default function Footer() {
       textAlign: 'center',
     }}>
       <p style={{ fontFamily: '"Space Mono", monospace', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
-        {t.footerRights}
+        {t.footerRights} 
       </p>
       <p style={{ fontFamily: '"Space Mono", monospace', fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem', flexWrap: 'wrap' }}>
         <a
