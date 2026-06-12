@@ -67,47 +67,39 @@ function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
   const base = [
     ...extra,
     '--no-playlist',
-    '--extractor-retries', '3',
+    '--extractor-retries', '5',
+    '--retry-sleep', '5',
+    '--sleep-requests', '1',
     '--js-runtimes', `node:${nodePath}`,
   ];
 
   if (platform === 'youtube') {
-    // Don't override player_client — let yt-dlp use its defaults (android_vr, ios_downgraded, etc.)
-    // Skip webpage extraction + enable remote EJS solvers to handle PO token challenges
+    // Let yt-dlp use its default clients (android_vr, ios_downgraded, etc.)
+    // These don't require PO tokens and work from datacenter IPs.
+    // Skip webpage extraction to avoid bot-triggering HTTP requests.
     base.push('--extractor-args', 'youtube:player_skip=webpage');
     base.push('--remote-components', 'ejs:github');
-
-    const cookiesPath = process.env.YOUTUBE_COOKIES_PATH;
-    if (cookiesPath) {
-      if (fs.existsSync(cookiesPath)) {
-        base.push('--cookies', cookiesPath);
-      } else {
-        logger.warn(`YOUTUBE_COOKIES_PATH set but file not found at ${cookiesPath}`);
-      }
-    }
+    // Cookies are intentionally NOT passed — expired cookies force the "web" client
+    // which triggers "Sign in to confirm you're not a bot" from datacenter IPs.
+    // Without cookies, yt-dlp uses android_vr/ios_downgraded which work fine.
   } else if (platform === 'instagram') {
     const proxyUrl = process.env.INSTAGRAM_PROXY_URL;
     if (proxyUrl) {
       base.push('--proxy', proxyUrl);
     }
+    // Cookies deshabilitadas intencionalmente (misma razón que YouTube):
+    // cookies expiradas fuerzan cliente web y desencadenan "login required"
+    // desde IPs de datacenter. Si el proxy es residencial, funciona sin cookies.
+    // Para usar cookies, deben ser FRESCAS (exportadas de incógnito sin recargar).
 
-    const cookiesPath = process.env.INSTAGRAM_COOKIES_PATH;
-    if (cookiesPath) {
-      if (fs.existsSync(cookiesPath)) {
-        base.push('--cookies', cookiesPath);
-      } else {
-        logger.warn(`INSTAGRAM_COOKIES_PATH set but file not found at ${cookiesPath}`);
-      }
-    }
-
-    if (!proxyUrl && !cookiesPath) {
+    if (!proxyUrl) {
       if (process.env.NODE_ENV === 'production') {
         throw Object.assign(
-          new Error('Instagram requiere configuración de proxy o cookies en producción'),
+          new Error('Instagram requiere proxy residencial en producción. Configura INSTAGRAM_PROXY_URL.'),
           { code: 'PROXY_REQUIRED' }
         );
       }
-      // En desarrollo, intentar sin proxy/cookies (IP residencial suele funcionar)
+      // En desarrollo, intentar sin proxy (IP residencial suele funcionar)
     }
   }
 
