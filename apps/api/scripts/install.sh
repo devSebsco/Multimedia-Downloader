@@ -24,6 +24,13 @@ if [ -z "$INSTALLED" ]; then
   INSTALLED=1
 fi
 
+echo "[install] Installing yt-dlp-youtube-oauth2 plugin..."
+if command -v python3 &>/dev/null; then
+  python3 -m pip install yt-dlp-youtube-oauth2 2>&1 || echo "[install] WARNING: Failed to install OAuth2 plugin"
+elif command -v pip &>/dev/null; then
+  pip install yt-dlp-youtube-oauth2 2>&1 || echo "[install] WARNING: Failed to install OAuth2 plugin"
+fi
+
 echo "[install] Verifying..."
 if command -v yt-dlp &>/dev/null; then
   echo "[install] yt-dlp found at $(command -v yt-dlp): $(yt-dlp --version)"

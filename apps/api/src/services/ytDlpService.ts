@@ -99,25 +99,13 @@ function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
   ];
 
   if (platform === 'youtube') {
-    // YouTube bloquea IPs de datacenter (Render) a nivel HTTP.
-    // player_client=android ayuda en algunos casos, pero si el IP está
-    // bloqueado, la única solución es proxy residencial o cookies frescas.
+    // OAuth2 plugin — autenticación sin cookies ni proxy.
+    // El token se genera localmente una vez y se sube a Render.
+    base.push('--username', 'oauth2', '--password', '');
 
-    const proxyUrl = process.env.YOUTUBE_PROXY_URL;
-    if (proxyUrl) {
-      const encoded = encodeProxyCredentials(proxyUrl);
-      base.push('--proxy', encoded);
-      logger.info(`YouTube proxy enabled: ${encoded.replace(/:([^@]+)@/, ':***@')}`);
-    }
-
-    const cookiesPath = process.env.YOUTUBE_COOKIES_PATH;
-    if (cookiesPath) {
-      if (fs.existsSync(cookiesPath)) {
-        base.push('--cookies', cookiesPath);
-        logger.info('YouTube cookies loaded (must be FRESH — exportadas de incógnito sin recargar)');
-      } else {
-        logger.warn(`YOUTUBE_COOKIES_PATH set but file not found at ${cookiesPath}`);
-      }
+    const oauth2Path = process.env.YOUTUBE_OAUTH2_TOKEN_PATH;
+    if (oauth2Path && fs.existsSync(oauth2Path)) {
+      logger.info(`YouTube OAuth2 token found at ${oauth2Path}`);
     }
 
     base.push('--extractor-args', 'youtube:player_client=android;player_skip=webpage');
@@ -142,6 +130,16 @@ function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
   return base;
 }
 
+function getSpawnEnv(platform: string): NodeJS.ProcessEnv {
+  if (platform === 'youtube') {
+    const tokenPath = process.env.YOUTUBE_OAUTH2_TOKEN_PATH;
+    if (tokenPath && fs.existsSync(tokenPath)) {
+      return { ...process.env, YTDLP_HOME: path.dirname(tokenPath) };
+    }
+  }
+  return process.env;
+}
+
 export function getMediaInfo(url: string, platform: string): Promise<MediaInfo> {
   return new Promise((resolve, reject) => {
     const ytDlpPath = getYtDlpPath();
@@ -149,7 +147,7 @@ export function getMediaInfo(url: string, platform: string): Promise<MediaInfo> 
 
     logger.debug(`Spawning: ${ytDlpPath} ${args.join(' ')}`);
 
-    const proc = spawn(ytDlpPath, args);
+    const proc = spawn(ytDlpPath, args, { env: getSpawnEnv(platform) });
     let stdout = '';
     let stderr = '';
 
@@ -274,7 +272,7 @@ export function downloadMedia(url: string, formatId: string, outputPath: string,
 
     logger.debug(`Spawning: ${ytDlpPath} ${args.join(' ')}`);
 
-    const proc = spawn(ytDlpPath, args);
+    const proc = spawn(ytDlpPath, args, { env: getSpawnEnv(platform) });
     let stderr = '';
 
     proc.stderr.on('data', (chunk: Buffer) => {
