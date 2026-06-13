@@ -63,30 +63,6 @@ type YtDlpDump = {
   ext: string;
 };
 
-function encodeProxyCredentials(rawUrl: string): string {
-  try {
-    // Usar el ÚLTIMO @ como separador user:pass vs host
-    // Esto evita que @ dentro de la contraseña rompa el parseo
-    const protoEnd = rawUrl.indexOf('://');
-    if (protoEnd === -1) return rawUrl;
-    const prefix = rawUrl.slice(0, protoEnd + 3);
-    const rest = rawUrl.slice(protoEnd + 3);
-    const lastAt = rest.lastIndexOf('@');
-    if (lastAt === -1) return rawUrl;
-    const creds = rest.slice(0, lastAt);
-    const hostPart = rest.slice(lastAt + 1);
-    const colonIdx = creds.indexOf(':');
-    if (colonIdx === -1) return rawUrl;
-    const user = creds.slice(0, colonIdx);
-    const pass = creds.slice(colonIdx + 1);
-    const encUser = encodeURIComponent(user);
-    const encPass = encodeURIComponent(pass);
-    return `${prefix}${encUser}:${encPass}@${hostPart}`;
-  } catch {
-    return rawUrl;
-  }
-}
-
 function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
   const nodePath = process.execPath;
   const base = [
@@ -99,57 +75,51 @@ function buildPlatformArgs(platform: string, extra: string[] = []): string[] {
   ];
 
   if (platform === 'youtube') {
-    // OAuth2 plugin — autenticación sin cookies ni proxy.
-    // El token se genera localmente una vez y se sube a Render.
-    base.push('--username', 'oauth2', '--password', '');
-
-    const oauth2Path = process.env.YOUTUBE_OAUTH2_TOKEN_PATH;
-    if (oauth2Path && fs.existsSync(oauth2Path)) {
-      logger.info(`YouTube OAuth2 token found at ${oauth2Path}`);
+    const cookiesPath = process.env.YOUTUBE_COOKIES_PATH;
+    if (cookiesPath && fs.existsSync(cookiesPath)) {
+      base.push('--cookies', cookiesPath);
     }
-
-    base.push('--extractor-args', 'youtube:player_client=android;player_skip=webpage');
-    base.push('--remote-components', 'ejs:github');
   } else if (platform === 'instagram') {
-    const proxyUrl = process.env.INSTAGRAM_PROXY_URL;
-    if (proxyUrl) {
-      const encoded = encodeProxyCredentials(proxyUrl);
-      const u = new URL(encoded);
-      logger.info(`Instagram proxy: ${u.protocol}//${u.username}:***@${u.hostname}:${u.port || '80'}`);
-      base.push('--proxy', encoded);
-    } else {
-      if (process.env.NODE_ENV === 'production') {
-        throw Object.assign(
-          new Error('Instagram requiere proxy residencial en producción. Configura INSTAGRAM_PROXY_URL.'),
-          { code: 'PROXY_REQUIRED' }
-        );
-      }
+    const cookiesPath = process.env.INSTAGRAM_COOKIES_PATH;
+    if (cookiesPath && fs.existsSync(cookiesPath)) {
+      base.push('--cookies', cookiesPath);
     }
   }
 
   return base;
 }
 
-function getSpawnEnv(platform: string): NodeJS.ProcessEnv {
-  if (platform === 'youtube') {
-    const tokenPath = process.env.YOUTUBE_OAUTH2_TOKEN_PATH;
-    if (tokenPath && fs.existsSync(tokenPath)) {
-      return { ...process.env, YTDLP_HOME: path.dirname(tokenPath) };
-    }
+type SpawnResult = {
+  stdout: string;
+  stderr: string;
+};
+
+function mapStderrError(stderr: string): { code: string; message: string } | null {
+  const lower = stderr.toLowerCase();
+  if (lower.includes('private video') || lower.includes('login required') || lower.includes('sign in') || lower.includes('confirm your age') || lower.includes('bot')) {
+    return { code: 'PRIVATE_CONTENT', message: 'Este contenido es privado o requiere inicio de sesión.' };
   }
-  return process.env;
+  if (lower.includes('not available') || lower.includes('geo') || lower.includes('blocked') || lower.includes('country')) {
+    return { code: 'GEO_RESTRICTED', message: 'Este contenido no está disponible en tu región.' };
+  }
+  if (lower.includes('not found') || lower.includes('does not exist') || lower.includes('404')) {
+    return { code: 'CONTENT_NOT_FOUND', message: 'Este contenido no existe o ha sido eliminado.' };
+  }
+  return null;
 }
 
-export function getMediaInfo(url: string, platform: string): Promise<MediaInfo> {
+function spawnYtDlp(ytDlpPath: string, args: string[], timeoutMs: number): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
-    const ytDlpPath = getYtDlpPath();
-    const args = [...buildPlatformArgs(platform), '--dump-json', url];
-
-    logger.debug(`Spawning: ${ytDlpPath} ${args.join(' ')}`);
-
-    const proc = spawn(ytDlpPath, args, { env: getSpawnEnv(platform) });
+    const proc = spawn(ytDlpPath, args);
     let stdout = '';
     let stderr = '';
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill();
+      reject(Object.assign(new Error('Tiempo de espera agotado.'), { code: 'DOWNLOAD_FAILED' }));
+    }, timeoutMs);
 
     proc.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
@@ -159,141 +129,134 @@ export function getMediaInfo(url: string, platform: string): Promise<MediaInfo> 
       stderr += chunk.toString();
     });
 
-    proc.on('error', (err) => {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+    proc.on('error', (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+      if (err.code === 'ENOENT') {
         reject(Object.assign(new Error('yt-dlp no encontrado. Ejecuta scripts/install.sh'), { code: 'YTDLP_NOT_INSTALLED' }));
       } else {
         reject(Object.assign(new Error(`yt-dlp spawn failed: ${err.message}`), { code: 'DOWNLOAD_FAILED' }));
       }
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', (code: number | null) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+
       if (code !== 0) {
-        const lower = stderr.toLowerCase();
         const snippet = stderr.slice(0, 600);
         logger.error(`yt-dlp exit code ${code}. stderr snippet: ${snippet}`);
-        if (lower.includes('private video') || lower.includes('login required') || lower.includes('sign in') || lower.includes('confirm your age') || lower.includes('bot')) {
-          reject(Object.assign(new Error('Este contenido es privado o requiere inicio de sesión.'), { code: 'PRIVATE_CONTENT' }));
-        } else if (lower.includes('not available') || lower.includes('geo') || lower.includes('blocked') || lower.includes('country')) {
-          reject(Object.assign(new Error('Este contenido no está disponible en tu región.'), { code: 'GEO_RESTRICTED' }));
-        } else if (lower.includes('407') && lower.includes('proxy authentication')) {
-          reject(Object.assign(new Error('Error de autenticación del proxy. Verifica que el usuario y contraseña en INSTAGRAM_PROXY_URL estén correctamente codificados (caracteres especiales como @ : / # deben ser URL-encoded).'), { code: 'PROXY_ERROR' }));
-        } else if (lower.includes('connection refused') || lower.includes('could not connect') || lower.includes('max retries') || lower.includes('connectionerror') || lower.includes('reset peer') || lower.includes('connection reset')) {
-          reject(Object.assign(new Error('Error de conexión. Verifica la configuración de proxy.'), { code: 'PROXY_ERROR' }));
+        const mapped = mapStderrError(stderr);
+        if (mapped) {
+          reject(Object.assign(new Error(mapped.message), { code: mapped.code }));
         } else {
           reject(Object.assign(new Error('Error al descargar la información del video.'), { code: 'DOWNLOAD_FAILED' }));
         }
         return;
       }
 
-      try {
-        const lines = stdout.trim().split('\n');
-        const lastLine = lines[lines.length - 1];
-        const data: YtDlpDump = JSON.parse(lastLine);
-
-        const contentType: ContentType = data.formats.every((f: YtDlpFormat) => f.vcodec === 'none') ? 'audio' : 'video';
-
-        const combinedFormats: YtDlpFormat[] = data.formats.filter((f: YtDlpFormat) =>
-          !['none', undefined, null].includes(f.vcodec) &&
-          f.vcodec !== '' &&
-          !['none', undefined, null].includes(f.acodec) &&
-          f.acodec !== '' &&
-          ['mp4', 'webm'].includes(f.ext) &&
-          (f.height != null && f.height > 0)
-        );
-
-        const videoFormats: VideoFormat[] = (contentType === 'audio' ? [] : data.formats)
-          .filter((f: YtDlpFormat) => {
-            if (contentType === 'audio') return false;
-            return !['none', undefined, null].includes(f.vcodec) &&
-                   f.vcodec !== '' &&
-                   ['mp4', 'webm'].includes(f.ext) &&
-                   (f.height != null && f.height > 0);
-          })
-          .map((f: YtDlpFormat) => ({
-            id: f.format_id,
-            quality: f.height ? `${f.height}p` : `${f.tbr ? Math.round(f.tbr) : 0}k`,
-            ext: f.ext as 'mp4' | 'webm',
-            filesize: f.filesize,
-          }))
-          .sort((a: VideoFormat, b: VideoFormat) => {
-            const aNum = parseInt(a.quality);
-            const bNum = parseInt(b.quality);
-            return bNum - aNum;
-          });
-
-        const pureAudioFormats = data.formats
-          .filter((f: YtDlpFormat) => {
-            const isAudioOnly = f.vcodec === 'none' || f.vcodec === '' || f.vcodec == null;
-            const hasAudio = f.acodec !== 'none' && f.acodec !== '' && f.acodec != null;
-            return isAudioOnly && hasAudio;
-          });
-
-        const audioFormats: AudioFormat[] = (pureAudioFormats.length > 0 ? pureAudioFormats : combinedFormats)
-          .map((f: YtDlpFormat) => ({
-            id: f.format_id,
-            quality: f.tbr ? `${Math.round(f.tbr)}kbps` : 'unknown',
-            ext: f.ext as 'm4a' | 'mp3' | 'wav',
-          }))
-          .sort((a: AudioFormat, b: AudioFormat) => {
-            const aNum = parseInt(a.quality);
-            const bNum = parseInt(b.quality);
-            return bNum - aNum;
-          });
-
-        const thumb = data.thumbnail ?? data.thumbnails?.[0]?.url ?? null;
-
-        resolve({
-          title: data.title,
-          thumbnail: thumb,
-          duration: data.duration ? Math.round(data.duration) : null,
-          platform: 'youtube',
-          contentType,
-          formats: {
-            video: videoFormats,
-            audio: audioFormats,
-          },
-        });
-      } catch (parseErr) {
-        logger.error('Failed to parse yt-dlp output:', parseErr);
-        reject(Object.assign(new Error('Error al procesar la respuesta de yt-dlp.'), { code: 'DOWNLOAD_FAILED' }));
-      }
+      resolve({ stdout, stderr });
     });
   });
 }
 
-export function downloadMedia(url: string, formatId: string, outputPath: string, platform: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const ytDlpPath = getYtDlpPath();
-    const isMerged = formatId.includes('+');
-    const args = isMerged
-      ? [...buildPlatformArgs(platform), '-f', formatId, '-o', `${outputPath}.%(ext)s`, '--merge-output-format', 'mp4', url]
-      : [...buildPlatformArgs(platform), '-f', formatId, '-o', outputPath, url];
+export function getMediaInfo(url: string, platform: string): Promise<MediaInfo> {
+  const ytDlpPath = getYtDlpPath();
+  const args = [...buildPlatformArgs(platform), '--dump-json', url];
 
-    logger.debug(`Spawning: ${ytDlpPath} ${args.join(' ')}`);
+  logger.debug(`Spawning: ${ytDlpPath} ${args.join(' ')}`);
 
-    const proc = spawn(ytDlpPath, args, { env: getSpawnEnv(platform) });
-    let stderr = '';
+  return spawnYtDlp(ytDlpPath, args, 60_000).then(({ stdout }) => {
+    const lines = stdout.trim().split('\n');
+    const lastLine = lines[lines.length - 1];
+    const data: YtDlpDump = JSON.parse(lastLine);
 
-    proc.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
+    const contentType: ContentType = data.formats.every((f: YtDlpFormat) => f.vcodec === 'none') ? 'audio' : 'video';
 
-    proc.on('error', (err) => {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        reject(Object.assign(new Error('yt-dlp no encontrado.'), { code: 'YTDLP_NOT_INSTALLED' }));
-      } else {
-        reject(Object.assign(new Error(`Error al descargar: ${err.message}`), { code: 'DOWNLOAD_FAILED' }));
-      }
-    });
+    const combinedFormats: YtDlpFormat[] = data.formats.filter((f: YtDlpFormat) =>
+      !['none', undefined, null].includes(f.vcodec) &&
+      f.vcodec !== '' &&
+      !['none', undefined, null].includes(f.acodec) &&
+      f.acodec !== '' &&
+      ['mp4', 'webm'].includes(f.ext) &&
+      (f.height != null && f.height > 0)
+    );
 
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        logger.error(`downloadMedia exit code ${code}. stderr: ${stderr.slice(0, 600)}`);
-        reject(Object.assign(new Error('Error al descargar el archivo multimedia.'), { code: 'DOWNLOAD_FAILED' }));
-      } else {
-        resolve();
-      }
-    });
+    const videoFormats: VideoFormat[] = (contentType === 'audio' ? [] : data.formats)
+      .filter((f: YtDlpFormat) => {
+        if (contentType === 'audio') return false;
+        return !['none', undefined, null].includes(f.vcodec) &&
+               f.vcodec !== '' &&
+               ['mp4', 'webm'].includes(f.ext) &&
+               (f.height != null && f.height > 0);
+      })
+      .map((f: YtDlpFormat): VideoFormat => ({
+        id: f.format_id,
+        quality: f.height ? `${f.height}p` : `${f.tbr ? Math.round(f.tbr) : 0}k`,
+        ext: f.ext as 'mp4' | 'webm',
+        filesize: f.filesize,
+      }))
+      .sort((a: VideoFormat, b: VideoFormat) => {
+        const aNum = parseInt(a.quality);
+        const bNum = parseInt(b.quality);
+        return bNum - aNum;
+      });
+
+    const pureAudioFormats = data.formats
+      .filter((f: YtDlpFormat) => {
+        const isAudioOnly = f.vcodec === 'none' || f.vcodec === '' || f.vcodec == null;
+        const hasAudio = f.acodec !== 'none' && f.acodec !== '' && f.acodec != null;
+        return isAudioOnly && hasAudio;
+      });
+
+    const audioFormats: AudioFormat[] = (pureAudioFormats.length > 0 ? pureAudioFormats : combinedFormats)
+      .map((f: YtDlpFormat): AudioFormat => ({
+        id: f.format_id,
+        quality: f.tbr ? `${Math.round(f.tbr)}kbps` : 'unknown',
+        ext: f.ext as 'm4a' | 'mp3' | 'wav',
+      }))
+      .sort((a: AudioFormat, b: AudioFormat) => {
+        const aNum = parseInt(a.quality);
+        const bNum = parseInt(b.quality);
+        return bNum - aNum;
+      });
+
+    const thumb = data.thumbnail ?? data.thumbnails?.[0]?.url ?? null;
+
+    return {
+      title: data.title,
+      thumbnail: thumb,
+      duration: data.duration ? Math.round(data.duration) : null,
+      platform,
+      contentType,
+      formats: {
+        video: videoFormats,
+        audio: audioFormats,
+      },
+    };
+  }).catch((err: Error & { code?: string }) => {
+    if (!err.code) {
+      throw Object.assign(new Error('Error al procesar la respuesta de yt-dlp.'), { code: 'DOWNLOAD_FAILED' });
+    }
+    throw err;
+  });
+}
+
+export function downloadMedia(url: string, formatId: string, outputPath: string, platform: string): Promise<string> {
+  const ytDlpPath = getYtDlpPath();
+  const isMerged = formatId.includes('+');
+  const args = isMerged
+    ? [...buildPlatformArgs(platform), '-f', formatId, '-o', `${outputPath}.%(ext)s`, '--merge-output-format', 'mp4', url]
+    : [...buildPlatformArgs(platform), '-f', formatId, '-o', outputPath, url];
+
+  logger.debug(`Spawning: ${ytDlpPath} ${args.join(' ')}`);
+
+  return spawnYtDlp(ytDlpPath, args, 300_000).then(() => {
+    return outputPath;
+  }).catch((err: Error & { code?: string }) => {
+    if (!err.code) {
+      throw Object.assign(new Error('Error al descargar el archivo multimedia.'), { code: 'DOWNLOAD_FAILED' });
+    }
+    throw err;
   });
 }
